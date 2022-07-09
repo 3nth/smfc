@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 #   install.sh (C) 2021-2023, Peter Sulyok
 #   Installation script for smfc service.
