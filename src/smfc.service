@@ -4,7 +4,7 @@ After=syslog.target
 
 [Service]
 Type=simple
-EnvironmentFile=-/etc/default/smfc
+EnvironmentFile=/etc/default/smfc
 ExecStart=/opt/smfc/smfc.py $OPTIONS
 
 [Install]
