@@ -1019,6 +1019,7 @@ class HdZone(FanController):
         current_time = time.monotonic()
         if current_time - self.last_time < self.polling:
             return
+        elapsed = current_time - self.last_time
         self.last_time = current_time
         # Step 2: read temperature and sensitivity gap.
         self.callback_func()
@@ -1032,7 +1033,7 @@ class HdZone(FanController):
         if self.last_error is None:
             self.last_error = 0
 
-        d = Kd * (current_error - self.last_error) / (self.polling / 60)
+        d = Kd * (current_error - self.last_error) / (elapsed / 60)
         pd = p + d
         current_level = int(self.last_level + pd)
         self.last_error = current_error
