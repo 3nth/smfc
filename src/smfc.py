@@ -652,6 +652,50 @@ class CpuZone(FanController):
             raise e
         return value
 
+    def run(self) -> None:
+        """Run IPMI zone controller function with the following steps:
+
+            * Step 1: Read current time. If the elapsed time is bigger than the polling time period
+              then go to step 2, otherwise return.
+            * Step 2: Read the current temperature. If the change of the temperature goes beyond
+              the sensitivity limit then go to step 3, otherwise return
+            * Step 3: Calculate the current gain and fan level based on the measured temperature
+            * Step 4: If the new fan level is different it will be set and logged
+        """
+        current_time: float     # Current system timestamp (measured)
+        current_temp: float     # Current temperature (measured)
+        current_level: int      # Current fan level (calculated)
+
+        # Step 1: check the elapsed time.
+        current_time = time.monotonic()
+        if current_time - self.last_time < self.polling:
+            return
+        self.last_time = current_time
+        # Step 2: read temperature and sensitivity gap.
+        self.callback_func()
+        current_temp = self.get_temp_func()
+        self.log.msg(self.log.LOG_DEBUG, '{}: {:.1f}C'.format(self.name, current_temp))
+        self.last_temp = current_temp
+        # Step 3: calculate gain and fan level.
+        #current_level = (current_temp - self.min_level) * self.steps + self.min_level
+        current_level = current_temp
+        if current_temp <= self.min_temp:
+            current_level = self.min_level
+        elif current_temp >= self.max_temp:
+            current_level = self.max_level
+
+        if current_level < self.min_level:
+            current_level = self.min_level
+        if current_level > self.max_level:
+            current_level = self.max_level
+
+        # Step 4: the new fan level will be set and logged.
+        if current_level != self.last_level:
+            self.set_fan_level(current_level)
+            self.log.msg(self.log.LOG_INFO, '{}: {}C : {}% => {}%'
+                         .format(self.name, current_temp, self.last_level, current_level))
+            self.last_level = current_level
+            
 
 class HdZone(FanController):
     """Class for HD zone fan control."""
@@ -668,6 +712,7 @@ class HdZone(FanController):
     standby_change_timestamp: float     # Timestamp of the latest change in STANDBY mode
     standby_array_states: List[bool]    # Standby states of HDs
 
+    last_error = 0                   # Last calculated error PID
     # Error message.
     ERROR_MSG_SMARTCTL: str = 'Unknown smartctl return value {}'
 
@@ -947,6 +992,67 @@ class HdZone(FanController):
             self.standby_flag = False
             self.standby_change_timestamp = cur_time
 
+    def run(self) -> None:
+        """Run IPMI zone controller function with the following steps:
+
+            * Step 1: Read current time. If the elapsed time is bigger than the polling time period
+              then go to step 2, otherwise return.
+            * Step 2: Read the current temperature. If the change of the temperature goes beyond
+              the sensitivity limit then go to step 3, otherwise return
+            * Step 3: Calculate the current gain and fan level based on the measured temperature
+            * Step 4: If the new fan level is different it will be set and logged
+        """
+        current_time: float     # Current system timestamp (measured)
+        current_temp: float     # Current temperature (measured)
+        current_level: int      # Current fan level (calculated)
+        current_error: float
+
+        reference_temp = 35
+
+        Kp = 4    #  Proportional tunable constant
+        Kd = 40   #  Derivative tunable constant
+        p: float
+        d: float
+        pd: int
+
+        # Step 1: check the elapsed time.
+        current_time = time.monotonic()
+        if current_time - self.last_time < self.polling:
+            return
+        elapsed = current_time - self.last_time
+        self.last_time = current_time
+        # Step 2: read temperature and sensitivity gap.
+        self.callback_func()
+        current_temp = self.get_temp_func()
+        self.log.msg(self.log.LOG_DEBUG, '{}: new temperature > {:.1f}C'.format(self.name, current_temp))
+        self.last_temp = current_temp
+        # Step 3: calculate gain and fan level.
+        current_error = current_temp - reference_temp
+        p = (Kp * current_error)
+
+        if self.last_error is None:
+            self.last_error = 0
+
+        d = Kd * (current_error - self.last_error) / (elapsed / 60)
+        pd = p + d
+        current_level = int(self.last_level + pd)
+        self.last_error = current_error
+        if current_temp <= self.min_temp:
+            current_level = self.min_level
+        elif current_temp >= self.max_temp:
+            current_level = self.max_level
+
+        if current_level < self.min_level:
+            current_level = self.min_level
+        if current_level > self.max_level:
+            current_level = self.max_level
+            
+        # Step 4: the new fan level will be set and logged.
+        if current_level != self.last_level:
+            self.set_fan_level(current_level)
+            self.log.msg(self.log.LOG_INFO, '{}: {:.1f}C : {}% => {}% [E: {:.2f}, D: {:.2f}, P: {:.2f}, PD: {:.2f}]'
+                         .format(self.name, current_temp, self.last_level, current_level, current_error, d, p, pd))
+            self.last_level = current_level
 
 def main():
     """Main function: starting point of the systemd service."""
